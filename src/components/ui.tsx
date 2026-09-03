@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 
 type Tone = "neutral" | "accent" | "ok" | "warn" | "danger" | "muted";
 
@@ -131,5 +131,40 @@ export function StatusDot({ active }: { active: boolean }) {
       className={`inline-block size-1.5 rounded-full ${active ? "bg-ok" : "bg-ink-faint"}`}
       title={active ? "Active" : "Suspended"}
     />
+  );
+}
+
+/** Keeps the focused row visible when selection moves from elsewhere — e.g. a newly created object. */
+function useScrollIntoView<T extends HTMLElement>(active: boolean) {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+  return ref;
+}
+
+export function ListRow({
+  selected,
+  onSelect,
+  children,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  children: ReactNode;
+}) {
+  const ref = useScrollIntoView<HTMLLIElement>(selected);
+  return (
+    <li ref={ref}>
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-current={selected ? "true" : undefined}
+        className={`w-full px-3 py-2 text-left transition-colors ${
+          selected ? "bg-accent-soft" : "hover:bg-surface-2"
+        }`}
+      >
+        {children}
+      </button>
+    </li>
   );
 }
