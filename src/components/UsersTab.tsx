@@ -11,18 +11,17 @@ import {
   grantsByPermission,
   sensitiveCount,
 } from "@/lib/rbac";
-import { useDirectory, useDispatch } from "@/lib/store";
+import { useDirectory, useDispatch, useSelected } from "@/lib/store";
 import type { User } from "@/lib/types";
-import { Button, Chip, EmptyState, Field, Panel, StatusDot } from "./ui";
+import { Button, Chip, EmptyState, Field, ListRow, Panel, StatusDot } from "./ui";
 
 export function UsersTab() {
   const { dir } = useDirectory();
   const dispatch = useDispatch();
-  const [selectedId, setSelectedId] = useState<string>(dir.users[0]?.id ?? "");
   const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
 
-  const selected = dir.users.find((u) => u.id === selectedId) ?? dir.users[0];
+  const selected = useSelected("user", dir.users);
 
   return (
     <div className="grid grid-cols-1 gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[280px_1fr]">
@@ -61,12 +60,7 @@ export function UsersTab() {
         )}
         <ul className="divide-y divide-line-soft">
           {dir.users.map((user) => (
-            <UserRow
-              key={user.id}
-              user={user}
-              selected={user.id === selected?.id}
-              onSelect={() => setSelectedId(user.id)}
-            />
+            <UserRow key={user.id} user={user} selected={user.id === selected?.id} />
           ))}
         </ul>
       </Panel>
@@ -76,29 +70,19 @@ export function UsersTab() {
   );
 }
 
-function UserRow({
-  user,
-  selected,
-  onSelect,
-}: {
-  user: User;
-  selected: boolean;
-  onSelect: () => void;
-}) {
+function UserRow({ user, selected }: { user: User; selected: boolean }) {
   const { dir } = useDirectory();
+  const dispatch = useDispatch();
   const perms = effectivePermissions(dir, user.id);
   const sensitive = sensitiveCount(dir, user.id);
   const conflict = SOD_CONFLICTS.some((c) => perms.has(c.a) && perms.has(c.b));
 
   return (
-    <li>
-      <button
-        type="button"
-        onClick={onSelect}
-        className={`w-full px-3 py-2 text-left transition-colors ${
-          selected ? "bg-accent-soft" : "hover:bg-surface-2"
-        }`}
-      >
+    <ListRow
+      selected={selected}
+      onSelect={() => dispatch({ type: "select", kind: "user", id: user.id })}
+    >
+      <>
         <div className="flex items-center gap-1.5">
           <StatusDot active={user.status === "active"} />
           <span className="truncate text-[13px] font-medium">{user.name}</span>
@@ -111,8 +95,8 @@ function UserRow({
           </Chip>
           {sensitive > 0 && <Chip tone="warn">{sensitive} sensitive</Chip>}
         </div>
-      </button>
-    </li>
+      </>
+    </ListRow>
   );
 }
 

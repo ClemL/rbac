@@ -112,65 +112,250 @@ test("m5 not solved by reusing a seeded group", () => {
 test("m6 solved by removing the nesting", () => {
   const dir = seedDirectory();
   dir.groups.find((g) => g.id === "grp-interns")!.memberOf = [];
-  assert.deepEqual(failing(dir, "m6-nesting"), []);
+  assert.deepEqual(failing(dir, "m9-nesting"), []);
 });
 
 test("m6 not solved by removing Ben from Interns", () => {
   const dir = seedDirectory();
   dir.users.find((u) => u.id === "u-ben")!.groupIds = [];
-  assert.deepEqual(failing(dir, "m6-nesting").sort(), ["ben-stays", "no-nesting"]);
+  assert.deepEqual(failing(dir, "m9-nesting").sort(), ["ben-stays", "no-nesting"]);
 });
 
 test("m7 solved by unpinning the auditor role from Nora", () => {
   const dir = seedDirectory();
   dir.users.find((u) => u.id === "u-nora")!.roleIds = [];
-  assert.deepEqual(failing(dir, "m7-export"), []);
+  assert.deepEqual(failing(dir, "m10-export"), []);
 });
 
 test("m7 also solved by moving Nora into Compliance", () => {
   const dir = seedDirectory();
   dir.users.find((u) => u.id === "u-nora")!.groupIds.push("grp-compliance");
-  assert.deepEqual(failing(dir, "m7-export"), []);
+  assert.deepEqual(failing(dir, "m10-export"), []);
 });
 
 test("m7 not solved by gutting the auditor role", () => {
   const dir = seedDirectory();
   const role = dir.roles.find((r) => r.id === "role-compliance-auditor")!;
   role.permissions = role.permissions.filter((p) => p !== "patients:export");
-  assert.ok(failing(dir, "m7-export").includes("sofia-keeps"));
+  assert.ok(failing(dir, "m10-export").includes("sofia-keeps"));
 });
 
-test("all missions can be complete at the same time", () => {
-  const dir = seedDirectory();
-  dir.users.find((u) => u.id === "u-dana")!.groupIds.push("grp-clinical-staff");
-  const marcus = dir.users.find((u) => u.id === "u-marcus")!;
-  marcus.groupIds = [];
-  marcus.roleIds = [];
-  marcus.status = "suspended";
-  const analyst = dir.roles.find((r) => r.id === "role-billing-analyst")!;
-  analyst.permissions = analyst.permissions.filter((p) => !p.startsWith("patients:"));
-  const aisha = dir.users.find((u) => u.id === "u-aisha")!;
-  aisha.groupIds = ["grp-billing"];
+/** The reference solution to every review, used to prove they are mutually satisfiable. */
+function solveAll(dir: Directory): Directory {
+  const user = (id: string) => dir.users.find((u) => u.id === id)!;
+  const group = (id: string) => dir.groups.find((g) => g.id === id)!;
+  const role = (id: string) => dir.roles.find((r) => r.id === id)!;
+
+  // 1 onboard
+  user("u-dana").groupIds.push("grp-clinical-staff");
+  // 2 offboard
+  Object.assign(user("u-marcus"), { groupIds: [], roleIds: [], status: "suspended" });
+  // 3 least privilege
+  role("role-billing-analyst").permissions = role("role-billing-analyst").permissions.filter(
+    (p) => !p.startsWith("patients:"),
+  );
+  // 4 segregation of duties
+  user("u-aisha").groupIds = ["grp-billing", "grp-all-staff"];
+  // 5 contractor
   dir.roles.push({
-    id: "role-x",
+    id: "role-report-viewer",
     name: "Report Viewer",
     description: "",
     permissions: ["reports:read"],
     builtIn: false,
   });
   dir.groups.push({
-    id: "grp-x",
+    id: "grp-contractors",
     name: "Contractors",
     description: "",
-    roleIds: ["role-x"],
+    roleIds: ["role-report-viewer"],
     memberOf: [],
     builtIn: false,
   });
-  dir.users.find((u) => u.id === "u-priya")!.groupIds = ["grp-x"];
-  dir.groups.find((g) => g.id === "grp-interns")!.memberOf = [];
-  dir.users.find((u) => u.id === "u-nora")!.roleIds = [];
+  user("u-priya").groupIds = ["grp-contractors"];
+  // 6 transfer
+  user("u-raj").groupIds = ["grp-compliance", "grp-all-staff"];
+  // 7 over-broad group
+  group("grp-all-staff").roleIds = [];
+  // 8 service account
+  dir.roles.push({
+    id: "role-claims-import",
+    name: "Claims Import",
+    description: "",
+    permissions: ["claims:create", "claims:update", "invoices:create"],
+    builtIn: false,
+  });
+  Object.assign(user("u-svc-import"), { groupIds: [], roleIds: ["role-claims-import"] });
+  // 9 nesting escalation
+  group("grp-interns").memberOf = [];
+  // 10 export containment
+  user("u-nora").roleIds = [];
+  // 11 shared entitlement
+  dir.groups.push({
+    id: "grp-revenue-cycle",
+    name: "Revenue Cycle",
+    description: "",
+    roleIds: ["role-report-viewer"],
+    memberOf: [],
+    builtIn: false,
+  });
+  group("grp-billing").memberOf = ["grp-revenue-cycle"];
+  group("grp-billing-approvers").memberOf = ["grp-revenue-cycle"];
+  // 12 break glass
+  dir.groups.push({
+    id: "grp-emergency-admins",
+    name: "Emergency Admins",
+    description: "",
+    roleIds: ["role-platform-admin"],
+    memberOf: [],
+    builtIn: false,
+  });
+  dir.users.push({
+    id: "u-breakglass",
+    name: "breakglass-admin",
+    title: "Emergency access",
+    email: "breakglass@meridian.example",
+    status: "suspended",
+    groupIds: ["grp-emergency-admins"],
+    roleIds: [],
+    builtIn: false,
+  });
+  // 13 recertification
+  dir.roles = dir.roles.filter((r) => r.id !== "role-legacy-chart-viewer");
+  dir.groups = dir.groups.filter((g) => g.id !== "grp-telehealth-pilot");
+  return dir;
+}
 
-  const results = evaluateMissions(dir);
-  const stuck = results.filter((r) => !r.complete).map((r) => r.mission.id);
+test("m6 solved by joining Compliance and leaving the clinical groups", () => {
+  const dir = seedDirectory();
+  dir.users.find((u) => u.id === "u-raj")!.groupIds = ["grp-compliance", "grp-all-staff"];
+  assert.deepEqual(failing(dir, "m6-transfer"), []);
+});
+
+test("m6 not solved by adding the new access alone", () => {
+  const dir = seedDirectory();
+  dir.users.find((u) => u.id === "u-raj")!.groupIds.push("grp-compliance");
+  assert.deepEqual(failing(dir, "m6-transfer").sort(), ["left", "old-access"]);
+});
+
+test("m7 solved by revoking the role from All Staff", () => {
+  const dir = seedDirectory();
+  dir.groups.find((g) => g.id === "grp-all-staff")!.roleIds = [];
+  assert.deepEqual(failing(dir, "m7-broad-group"), []);
+});
+
+test("m7 not solved by deleting the group's membership", () => {
+  const dir = seedDirectory();
+  for (const u of dir.users) u.groupIds = u.groupIds.filter((g) => g !== "grp-all-staff");
+  assert.ok(failing(dir, "m7-broad-group").includes("intact"));
+});
+
+test("m8 solved by a purpose-built role and leaving Platform Admins", () => {
+  const dir = seedDirectory();
+  dir.roles.push({
+    id: "role-claims-import",
+    name: "Claims Import",
+    description: "",
+    permissions: ["claims:create", "claims:update", "invoices:create"],
+    builtIn: false,
+  });
+  Object.assign(dir.users.find((u) => u.id === "u-svc-import")!, {
+    groupIds: [],
+    roleIds: ["role-claims-import"],
+  });
+  assert.deepEqual(failing(dir, "m8-service-account"), []);
+});
+
+test("m8 not solved by suspending the service account", () => {
+  const dir = seedDirectory();
+  dir.users.find((u) => u.id === "u-svc-import")!.status = "suspended";
+  assert.ok(failing(dir, "m8-service-account").includes("running"));
+});
+
+test("m11 solved by one shared parent group", () => {
+  const dir = seedDirectory();
+  dir.roles.push({
+    id: "role-report-viewer",
+    name: "Report Viewer",
+    description: "",
+    permissions: ["reports:read"],
+    builtIn: false,
+  });
+  dir.groups.push({
+    id: "grp-revenue-cycle",
+    name: "Revenue Cycle",
+    description: "",
+    roleIds: ["role-report-viewer"],
+    memberOf: [],
+    builtIn: false,
+  });
+  dir.groups.find((g) => g.id === "grp-billing")!.memberOf = ["grp-revenue-cycle"];
+  dir.groups.find((g) => g.id === "grp-billing-approvers")!.memberOf = ["grp-revenue-cycle"];
+  assert.deepEqual(failing(dir, "m11-shared-entitlement"), []);
+});
+
+test("m11 not solved by copying the permission into the approver role", () => {
+  const dir = seedDirectory();
+  dir.roles.find((r) => r.id === "role-billing-approver")!.permissions.push("reports:read");
+  const stuck = failing(dir, "m11-shared-entitlement");
+  assert.ok(stuck.includes("no-copy"));
+  assert.ok(stuck.includes("single-source"));
+});
+
+test("m12 solved by a suspended group-entitled account", () => {
+  const dir = seedDirectory();
+  dir.groups.push({
+    id: "grp-emergency-admins",
+    name: "Emergency Admins",
+    description: "",
+    roleIds: ["role-platform-admin"],
+    memberOf: [],
+    builtIn: false,
+  });
+  dir.users.push({
+    id: "u-breakglass",
+    name: "breakglass-admin",
+    title: "Emergency access",
+    email: "bg@meridian.example",
+    status: "suspended",
+    groupIds: ["grp-emergency-admins"],
+    roleIds: [],
+    builtIn: false,
+  });
+  assert.deepEqual(failing(dir, "m12-break-glass"), []);
+});
+
+test("m12 not satisfied by a seeded account that happens to be suspended", () => {
+  const dir = seedDirectory();
+  dir.users.find((u) => u.id === "u-lena")!.status = "suspended";
+  assert.equal(failing(dir, "m12-break-glass").length, 4);
+});
+
+test("m13 requires clearing the player's own unwired objects too", () => {
+  const dir = seedDirectory();
+  dir.roles = dir.roles.filter((r) => r.id !== "role-legacy-chart-viewer");
+  dir.groups = dir.groups.filter((g) => g.id !== "grp-telehealth-pilot");
+  assert.deepEqual(failing(dir, "m13-recertification"), []);
+
+  dir.roles.push({
+    id: "role-draft",
+    name: "Draft",
+    description: "",
+    permissions: [],
+    builtIn: false,
+  });
+  assert.deepEqual(failing(dir, "m13-recertification"), ["no-orphan-roles"]);
+});
+
+test("all reviews can be closed at the same time", () => {
+  const dir = solveAll(seedDirectory());
+  const stuck = evaluateMissions(dir)
+    .filter((r) => !r.complete)
+    .map((r) => `${r.mission.id}: ${r.checks.filter((c) => !c.pass).map((c) => c.id).join(",")}`);
   assert.deepEqual(stuck, []);
+});
+
+test("the reference solution leaves no policy violations", () => {
+  const dir = solveAll(seedDirectory());
+  assert.equal(evaluateMissions(dir).every((r) => r.complete), true);
 });

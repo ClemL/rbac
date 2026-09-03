@@ -1,12 +1,15 @@
 import {
+  ancestorGroups,
   effectivePermissions,
   expandedGroups,
   findGroup,
   findRole,
   findUser,
+  grantedPermissions,
   groupPermissions,
+  orphanRoles,
 } from "./rbac";
-import { SEED_GROUP_IDS } from "./seed";
+import { SEED_GROUP_IDS, SEED_USER_IDS } from "./seed";
 import type { Directory, PermissionKey } from "./types";
 
 export interface Check {
@@ -37,6 +40,21 @@ const sameSet = (dir: Directory, userId: string, expected: PermissionKey[]) => {
 
 const inGroup = (dir: Directory, userId: string, groupId: string) =>
   expandedGroups(dir, userId).has(groupId);
+
+
+const isDormant = (user: { status: string }) => user.status === "suspended";
+
+const isEntitled = (dir: Directory, userId: string) => {
+  const granted = grantedPermissions(dir, userId);
+  return granted.has("settings:update") && granted.has("users:delete");
+};
+
+const viaGroup = (user: { roleIds: string[]; groupIds: string[] }) =>
+  user.roleIds.length === 0 && user.groupIds.length > 0;
+
+/** Accounts the player created; the seeded ten are never break-glass candidates. */
+const breakGlassCandidates = (dir: Directory) =>
+  dir.users.filter((u) => !SEED_USER_IDS.includes(u.id));
 
 export const MISSIONS: Mission[] = [
   {
@@ -216,7 +234,103 @@ export const MISSIONS: Mission[] = [
     ],
   },
   {
-    id: "m6-nesting",
+    id: "m6-transfer",
+    title: "Move a transfer without privilege creep",
+    category: "Lifecycle",
+    difficulty: "Core",
+    brief:
+      "Raj Patel transferred out of the physician pool and into Compliance last month. His new access was never provisioned and his old access was never removed — the classic mover problem. Give him what Compliance holds and take back what the clinical floor gave him.",
+    hint: "A transfer is a leaver and a joiner in one action: add the new group, then remove the old one. Physicians is nested inside Clinical Staff, so dropping Physicians drops both.",
+    checks: [
+      {
+        id: "joined",
+        label: "Raj is a member of Compliance",
+        test: (d) => inGroup(d, "u-raj", "grp-compliance"),
+      },
+      {
+        id: "left",
+        label: "Raj is out of Physicians and Clinical Staff",
+        test: (d) =>
+          !inGroup(d, "u-raj", "grp-physicians") && !inGroup(d, "u-raj", "grp-clinical-staff"),
+      },
+      {
+        id: "new-access",
+        label: "Raj can export regulatory reports",
+        test: (d) => can(d, "u-raj", "reports:export"),
+      },
+      {
+        id: "old-access",
+        label: "Raj can no longer author charts or submit claims",
+        test: (d) => !can(d, "u-raj", "patients:create") && !can(d, "u-raj", "claims:create"),
+      },
+      {
+        id: "no-direct",
+        label: "No roles pinned directly to his account",
+        test: (d) => (findUser(d, "u-raj")?.roleIds.length ?? 1) === 0,
+      },
+    ],
+  },
+  {
+    id: "m7-broad-group",
+    title: "Defuse an over-broad group",
+    category: "Least privilege",
+    difficulty: "Core",
+    brief:
+      "All Staff contains every employee, and somebody attached the Help Desk role to it. The entire company can therefore edit accounts. Take the entitlement away from All Staff without dissolving the group and without costing the actual help desk their tooling.",
+    hint: "The group is fine; what it carries is not. Revoke the role from All Staff — the Help Desk group carries the same role for the people who should have it.",
+    checks: [
+      {
+        id: "narrowed",
+        label: "All Staff no longer confers account editing",
+        test: (d) => !groupPermissions(d, "grp-all-staff").has("users:update"),
+      },
+      {
+        id: "intact",
+        label: "All Staff still exists with its membership",
+        test: (d) =>
+          !!findGroup(d, "grp-all-staff") &&
+          d.users.filter((u) => u.groupIds.includes("grp-all-staff")).length >= 5,
+      },
+      {
+        id: "helpdesk-keeps",
+        label: "Nora, on the help desk, can still edit accounts",
+        test: (d) => can(d, "u-nora", "users:update"),
+      },
+      {
+        id: "others-lose",
+        label: "Sofia, in Compliance, cannot edit accounts",
+        test: (d) => !can(d, "u-sofia", "users:update"),
+      },
+    ],
+  },
+  {
+    id: "m8-service-account",
+    title: "Scope a service account",
+    category: "Non-human identity",
+    difficulty: "Advanced",
+    brief:
+      "The nightly claims import runs as svc-nightly-import, which was made a Platform Admin because that was quickest. The job only writes claims and raises invoices. Cut it down to precisely those three permissions — it is a shared credential, so whatever it holds is what an attacker holds.",
+    hint: "Build a role carrying create claims, update claims and create invoices, attach it to the account, and take the account out of Platform Admins.",
+    checks: [
+      {
+        id: "exact",
+        label: "Holds exactly claims:create, claims:update and invoices:create",
+        test: (d) => sameSet(d, "u-svc-import", ["claims:create", "claims:update", "invoices:create"]),
+      },
+      {
+        id: "not-admin",
+        label: "No longer a Platform Admin",
+        test: (d) => !inGroup(d, "u-svc-import", "grp-platform-admins"),
+      },
+      {
+        id: "running",
+        label: "Account is still active so the job keeps running",
+        test: (d) => findUser(d, "u-svc-import")?.status === "active",
+      },
+    ],
+  },
+  {
+    id: "m9-nesting",
     title: "Close a nested-group escalation",
     category: "Privilege escalation",
     difficulty: "Advanced",
@@ -247,7 +361,7 @@ export const MISSIONS: Mission[] = [
     ],
   },
   {
-    id: "m7-export",
+    id: "m10-export",
     title: "Contain a sensitive export permission",
     category: "Data governance",
     difficulty: "Advanced",
@@ -277,6 +391,117 @@ export const MISSIONS: Mission[] = [
         id: "nora-works",
         label: "Nora keeps her help desk access",
         test: (d) => can(d, "u-nora", "users:update") && can(d, "u-nora", "users:read"),
+      },
+    ],
+  },
+  {
+    id: "m11-shared-entitlement",
+    title: "Grant a shared entitlement once",
+    category: "Directory structure",
+    difficulty: "Advanced",
+    brief:
+      "Finance decided the whole revenue cycle needs operational reporting. Billing analysts already have it through their role; billing approvers do not. Do not copy the permission into a second role and do not pin anything to individuals — put it in one place and have both groups inherit it, so the next revenue-cycle group inherits it too.",
+    hint: "Create a role carrying report reading, create a group that holds that role, then make Billing and Billing Approvers members of it. Nesting is how a directory avoids duplicating an entitlement.",
+    checks: [
+      {
+        id: "billing",
+        label: "Billing confers report reading",
+        test: (d) => groupPermissions(d, "grp-billing").has("reports:read"),
+      },
+      {
+        id: "approvers",
+        label: "Billing Approvers confers report reading",
+        test: (d) => groupPermissions(d, "grp-billing-approvers").has("reports:read"),
+      },
+      {
+        id: "no-copy",
+        label: "The Billing Approver role itself was not edited",
+        test: (d) =>
+          !(findRole(d, "role-billing-approver")?.permissions ?? []).includes("reports:read"),
+      },
+      {
+        id: "single-source",
+        label: "Both groups inherit it from one shared parent group",
+        test: (d) => {
+          const a = ancestorGroups(d, "grp-billing");
+          const b = ancestorGroups(d, "grp-billing-approvers");
+          return [...a].some((id) => b.has(id) && groupPermissions(d, id).has("reports:read"));
+        },
+      },
+    ],
+  },
+  {
+    id: "m12-break-glass",
+    title: "Stand up a break-glass account",
+    category: "Resilience",
+    difficulty: "Advanced",
+    brief:
+      "Audit wants a documented emergency path: a separate administrator account that is fully entitled on paper but cannot be used until someone deliberately activates it. Create a new account, entitle it through a group, and leave it suspended. Its permission list should read long while its effective access reads zero.",
+    hint: "Create the account, create or reuse a group carrying Platform Admin, add the account to it, then suspend it. The user detail view shows the gap between what is granted and what is effective.",
+    checks: [
+      {
+        id: "suspended",
+        label: "A newly created account exists and is suspended",
+        test: (d) => breakGlassCandidates(d).some(isDormant),
+      },
+      {
+        id: "entitled",
+        label: "It is granted settings and account administration on paper",
+        test: (d) => breakGlassCandidates(d).some((u) => isEntitled(d, u.id)),
+      },
+      {
+        id: "via-group",
+        label: "Its entitlements come from a group, not a pinned role",
+        test: (d) => breakGlassCandidates(d).some(viaGroup),
+      },
+      {
+        id: "complete",
+        label: "One account meets all three and holds nothing in effect",
+        test: (d) =>
+          breakGlassCandidates(d).some(
+            (u) =>
+              isDormant(u) &&
+              isEntitled(d, u.id) &&
+              viaGroup(u) &&
+              effectivePermissions(d, u.id).size === 0,
+          ),
+      },
+    ],
+  },
+  {
+    id: "m13-recertification",
+    title: "Retire what nothing uses",
+    category: "Directory hygiene",
+    difficulty: "Advanced",
+    brief:
+      "Quarterly recertification: a dormant role that still carries patient export, a pilot group abandoned in 2019, and anything else in the directory that no longer reaches a person. Dead objects are what attackers reactivate. Clear them out and leave nothing unreferenced behind.",
+    hint: "Delete the Legacy Chart Viewer role and the Telehealth Pilot group. Then check the rest: any role carried by no group and no account, and any group with neither members nor roles, has to go too — including anything you created and never wired up.",
+    checks: [
+      {
+        id: "legacy-role",
+        label: "The Legacy Chart Viewer role is retired",
+        test: (d) => !findRole(d, "role-legacy-chart-viewer"),
+      },
+      {
+        id: "pilot-group",
+        label: "The Telehealth Pilot group is retired",
+        test: (d) => !findGroup(d, "grp-telehealth-pilot"),
+      },
+      {
+        id: "no-orphan-roles",
+        label: "Every role is carried by a group or an account",
+        test: (d) => orphanRoles(d).length === 0,
+      },
+      {
+        id: "no-empty-groups",
+        label: "Every group has members or confers something",
+        test: (d) =>
+          !d.groups.some(
+            (g) =>
+              g.roleIds.length === 0 &&
+              !d.users.some((u) => u.groupIds.includes(g.id)) &&
+              !d.groups.some((child) => child.memberOf.includes(g.id)),
+          ),
       },
     ],
   },

@@ -9,18 +9,17 @@ import {
   groupPermissions,
   wouldCreateCycle,
 } from "@/lib/rbac";
-import { useDirectory, useDispatch } from "@/lib/store";
+import { useDirectory, useDispatch, useSelected } from "@/lib/store";
 import type { Group } from "@/lib/types";
-import { Button, Chip, EmptyState, Field, Panel } from "./ui";
+import { Button, Chip, EmptyState, Field, ListRow, Panel } from "./ui";
 
 export function GroupsTab() {
   const { dir } = useDirectory();
   const dispatch = useDispatch();
-  const [selectedId, setSelectedId] = useState<string>(dir.groups[0]?.id ?? "");
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
 
-  const selected = dir.groups.find((g) => g.id === selectedId) ?? dir.groups[0];
+  const selected = useSelected("group", dir.groups);
 
   return (
     <div className="grid grid-cols-1 gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[280px_1fr]">
@@ -61,14 +60,12 @@ export function GroupsTab() {
           {dir.groups.map((group) => {
             const members = effectiveMembers(dir, group.id).length;
             return (
-              <li key={group.id}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedId(group.id)}
-                  className={`w-full px-3 py-2 text-left transition-colors ${
-                    group.id === selected?.id ? "bg-accent-soft" : "hover:bg-surface-2"
-                  }`}
-                >
+              <ListRow
+                key={group.id}
+                selected={group.id === selected?.id}
+                onSelect={() => dispatch({ type: "select", kind: "group", id: group.id })}
+              >
+                <>
                   <div className="truncate text-[13px] font-medium">{group.name}</div>
                   <div className="mt-1 flex flex-wrap gap-1">
                     <Chip tone="muted">
@@ -79,8 +76,8 @@ export function GroupsTab() {
                     </Chip>
                     {group.memberOf.length > 0 && <Chip tone="accent">nested</Chip>}
                   </div>
-                </button>
-              </li>
+                </>
+              </ListRow>
             );
           })}
         </ul>

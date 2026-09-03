@@ -4,18 +4,17 @@ import { useState } from "react";
 
 import { permissionsForResource, RESOURCES } from "@/lib/permissions";
 import { effectiveMembers } from "@/lib/rbac";
-import { useDirectory, useDispatch } from "@/lib/store";
+import { useDirectory, useDispatch, useSelected } from "@/lib/store";
 import type { Role } from "@/lib/types";
-import { Button, Chip, EmptyState, Field, Panel } from "./ui";
+import { Button, Chip, EmptyState, Field, ListRow, Panel } from "./ui";
 
 export function RolesTab() {
   const { dir } = useDirectory();
   const dispatch = useDispatch();
-  const [selectedId, setSelectedId] = useState<string>(dir.roles[0]?.id ?? "");
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
 
-  const selected = dir.roles.find((r) => r.id === selectedId) ?? dir.roles[0];
+  const selected = useSelected("role", dir.roles);
 
   return (
     <div className="grid grid-cols-1 gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[280px_1fr]">
@@ -59,14 +58,12 @@ export function RolesTab() {
             const reach = new Set<string>(directUsers.map((u) => u.id));
             for (const g of groups) for (const m of effectiveMembers(dir, g.id)) reach.add(m.id);
             return (
-              <li key={role.id}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedId(role.id)}
-                  className={`w-full px-3 py-2 text-left transition-colors ${
-                    role.id === selected?.id ? "bg-accent-soft" : "hover:bg-surface-2"
-                  }`}
-                >
+              <ListRow
+                key={role.id}
+                selected={role.id === selected?.id}
+                onSelect={() => dispatch({ type: "select", kind: "role", id: role.id })}
+              >
+                <>
                   <div className="truncate text-[13px] font-medium">{role.name}</div>
                   <div className="mt-1 flex flex-wrap gap-1">
                     <Chip tone="muted">
@@ -76,8 +73,8 @@ export function RolesTab() {
                       {reach.size === 0 ? "unused" : `${reach.size} reached`}
                     </Chip>
                   </div>
-                </button>
-              </li>
+                </>
+              </ListRow>
             );
           })}
         </ul>

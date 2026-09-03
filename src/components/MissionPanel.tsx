@@ -15,8 +15,12 @@ export function MissionPanel() {
   const { results, actions } = useDirectory();
   const [open, setOpen] = useState<string | null>(results.find((r) => !r.complete)?.mission.id ?? null);
   const [hints, setHints] = useState<string[]>([]);
+  const [filter, setFilter] = useState<"all" | "open" | "closed">("all");
 
   const done = results.filter((r) => r.complete).length;
+  const visible = results.filter((r) =>
+    filter === "all" ? true : filter === "open" ? !r.complete : r.complete,
+  );
   const totalChecks = results.reduce((n, r) => n + r.total, 0);
   const passedChecks = results.reduce((n, r) => n + r.passed, 0);
 
@@ -36,10 +40,27 @@ export function MissionPanel() {
         <p className="mt-1.5 text-[11px] text-ink-faint">
           {passedChecks} of {totalChecks} acceptance criteria met. Re-graded after every change.
         </p>
+        <div className="mt-2 flex gap-1">
+          {(["all", "open", "closed"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setFilter(option)}
+              className={`rounded px-2 py-0.5 text-[11px] capitalize transition-colors ${
+                filter === option
+                  ? "bg-surface-3 text-ink"
+                  : "text-ink-faint hover:bg-surface-2 hover:text-ink-muted"
+              }`}
+            >
+              {option}
+              {option === "open" && ` (${results.length - done})`}
+            </button>
+          ))}
+        </div>
       </div>
 
       <ul className="divide-y divide-line-soft">
-        {results.map((result) => {
+        {visible.map((result) => {
           const isOpen = open === result.mission.id;
           const showHint = hints.includes(result.mission.id);
           return (
