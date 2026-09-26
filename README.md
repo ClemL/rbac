@@ -68,6 +68,37 @@ tab switches, and a newly created object is selected and scrolled into view auto
 - **Impersonate** — open the managed system as any account. Records are redacted without read
   access, and every action button returns `200 ALLOWED` with its grant path or `403 DENIED`.
 
+## The intro animation
+
+A 3:16 hand-drawn, paper-collage explainer plays in a dialog on first visit and is always one click
+away from **▶ Watch the 3-min intro** in the header. It has no audio; subtitles carry the narration,
+and a clickable transcript sits under the player.
+
+It is a pure canvas-2D animation with no video file and no animation library. `render(time)` draws
+any moment as a pure function of time, so seeking, pausing and replaying cost nothing. Cut-outs
+(torn paper, tape, stamps, people) are baked once into offscreen canvases and pre-warmed in the
+background; marker lines are re-seeded eight times a second to "boil" like traced animation, and
+content moves on twos (12 drawings per second). `prefers-reduced-motion` turns off the boil, the
+camera drift and the stop-motion stepping.
+
+Controls: Space play/pause · ←/→ seek 5s · C subtitles · F fullscreen · Esc close.
+
+```
+src/explainer/core.ts       Shared frame state, seeded noise, easing
+src/explainer/ink.ts        Wobbly marker strokes, arrows, hatching, checks
+src/explainer/paper.ts      Torn/cut scraps, tape, pins, backdrops, scene wipes
+src/explainer/text.ts       Write-on lettering, ransom-note titles, labels
+src/explainer/props.ts      Paper-doll cast, icons, tickets, envelopes, boxes, stamps
+src/explainer/scenes/       The ten chapters
+src/explainer/timeline.ts   Scene order, lengths, camera moves
+src/explainer/script.ts     Subtitle cues (same clock as the timeline)
+src/components/ExplainerPlayer.tsx / ExplainerDialog.tsx
+tests/explainer.test.ts     Length, scene tiling, subtitle overlap and reading speed
+```
+
+The review cards in the montage and the console tour read titles and acceptance criteria straight
+from `src/lib/tasks.ts`, so the animation stays in step with the grader.
+
 ## Running it
 
 ```bash
