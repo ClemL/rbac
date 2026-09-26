@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { SYSTEM_NAME } from "@/lib/seed";
 import { sodViolations } from "@/lib/rbac";
 import { useDirectory, useDispatch } from "@/lib/store";
 import { ActivityLog } from "./ActivityLog";
+import { ExplainerDialog } from "./ExplainerDialog";
 import { GroupsTab } from "./GroupsTab";
 import { MissionPanel } from "./MissionPanel";
 import { RolesTab } from "./RolesTab";
@@ -22,11 +23,37 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
+const INTRO_SEEN_KEY = "rbac-sandbox:intro-seen";
+
 export function Console() {
   const { dir, results, actions } = useDirectory();
   const dispatch = useDispatch();
   const [tab, setTab] = useState<TabId>("users");
   const [showLog, setShowLog] = useState(true);
+  const [showIntro, setShowIntro] = useState(false);
+
+  // First visit: offer the explainer before dropping someone into a live console.
+  useEffect(() => {
+    let seen = true;
+    try {
+      seen = localStorage.getItem(INTRO_SEEN_KEY) === "1";
+    } catch {
+      // Storage blocked: behave as a returning visitor rather than nagging every load.
+    }
+    if (!seen) {
+      const id = window.setTimeout(() => setShowIntro(true), 400);
+      return () => window.clearTimeout(id);
+    }
+  }, []);
+
+  const closeIntro = useCallback(() => {
+    setShowIntro(false);
+    try {
+      localStorage.setItem(INTRO_SEEN_KEY, "1");
+    } catch {
+      // Non-essential.
+    }
+  }, []);
 
   const done = results.filter((r) => r.complete).length;
   const conflicts = sodViolations(dir).length;
@@ -46,6 +73,9 @@ export function Console() {
             {conflicts} SoD conflict{conflicts === 1 ? "" : "s"}
           </Chip>
           <Chip tone="muted">{actions} changes</Chip>
+          <Button variant="primary" onClick={() => setShowIntro(true)}>
+            ▶ Watch the 3-min intro
+          </Button>
           <Button variant="ghost" onClick={() => setShowLog((s) => !s)}>
             {showLog ? "Hide log" : "Show log"}
           </Button>
@@ -93,6 +123,8 @@ export function Console() {
           </div>
         </div>
       </div>
+
+      <ExplainerDialog open={showIntro} onClose={closeIntro} />
     </div>
   );
 }
