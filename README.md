@@ -30,6 +30,23 @@ User ──directly assigned─────────────────�
 Cycles in group nesting are rejected at the UI layer rather than silently producing infinite
 recursion.
 
+## Redesign operations
+
+Two compound operations restructure the directory without changing what anyone can do. Both are
+refactors: every account's granted and effective permissions are identical before and after, so
+the access decision that follows stays a separate, deliberate step the reviews can grade.
+
+- **Split role** (Roles → *Split…*) — moves the permissions you pick out of a role into a new
+  role, and grants the new role to every group and account that held the original. The two halves
+  can then be revoked independently. Splitting `patients:delete` out of Billing Analyst does not
+  close review 3 by itself: the Billing team can still delete patients until the split-off role is
+  revoked from the group.
+- **Move direct assignments into a group** (Roles → *Pinned directly to accounts*) — replaces
+  every direct assignment of a role with membership of a group that confers exactly that role's
+  permissions: an existing equivalent group, or a new group created to carry the role. Groups that
+  would confer anything more are not offered. Moving Nora's pinned Compliance Auditor role into
+  Compliance is one of review 10's accepted fixes.
+
 ## The reviews
 
 Thirteen reviews, each planted as a real defect in the seeded tenant.
@@ -64,7 +81,8 @@ Selection is held in the store rather than in the tabs, so the focused user, gro
 tab switches, and a newly created object is selected and scrolled into view automatically.
 - **Groups** — role grants, nesting in both directions, direct vs. inherited members, and the union
   of permissions the group confers.
-- **Roles** — a permission matrix by resource, plus how far the role reaches.
+- **Roles** — a permission matrix by resource, how far the role reaches, and the two redesign
+  operations.
 - **Impersonate** — open the managed system as any account. Records are redacted without read
   access, and every action button returns `200 ALLOWED` with its grant path or `403 DENIED`.
 
@@ -128,9 +146,12 @@ src/lib/types.ts        Directory model
 src/lib/permissions.ts  Permission catalog and SoD conflict pairs
 src/lib/seed.ts         The seeded tenant, planted with each review's defect
 src/lib/rbac.ts         Resolution engine: closures, grants, derivation paths
+src/lib/redesign.ts     Access-preserving operations: split role, move direct assignments
 src/lib/tasks.ts        Review definitions and the grader
 src/lib/store.tsx       Reducer; re-grades every review after each mutation
 src/components/         Console shell, four tabs, review panel, activity log
 tests/missions.test.ts  Proves each review is solvable, that all thirteen can
                         hold at once, and that the shortcut solutions fail
+tests/redesign.test.ts  Proves every legal redesign operation on the seed leaves
+                        everyone's access unchanged
 ```

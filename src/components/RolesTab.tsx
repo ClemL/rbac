@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 
-import { permissionsForResource, RESOURCES } from "@/lib/permissions";
+import { isSensitive, permissionsForResource, RESOURCES } from "@/lib/permissions";
 import { effectiveMembers } from "@/lib/rbac";
+import { directHolders, equivalentGroups, splitBlocker } from "@/lib/redesign";
 import { useDirectory, useDispatch, useSelected } from "@/lib/store";
-import type { Role } from "@/lib/types";
+import type { PermissionKey, Role, User } from "@/lib/types";
 import { Button, Chip, EmptyState, Field, ListRow, Panel } from "./ui";
 
 export function RolesTab() {
@@ -80,14 +81,18 @@ export function RolesTab() {
         </ul>
       </Panel>
 
-      {selected ? <RoleDetail role={selected} /> : <Panel><EmptyState>No roles.</EmptyState></Panel>}
+      {selected ? <RoleDetail key={selected.id} role={selected} /> : <Panel><EmptyState>No roles.</EmptyState></Panel>}
     </div>
   );
 }
 
+const INPUT =
+  "min-w-0 flex-1 rounded-md border border-line bg-surface-2 px-2 py-1 text-xs outline-none focus:border-accent";
+
 function RoleDetail({ role }: { role: Role }) {
   const { dir } = useDirectory();
   const dispatch = useDispatch();
+  const [splitting, setSplitting] = useState(false);
 
   const groups = dir.groups.filter((g) => g.roleIds.includes(role.id));
   const directUsers = dir.users.filter((u) => u.roleIds.includes(role.id));
@@ -99,13 +104,25 @@ function RoleDetail({ role }: { role: Role }) {
       title={role.name}
       subtitle={role.description}
       actions={
-        <Button variant="danger" onClick={() => dispatch({ type: "role/delete", roleId: role.id })}>
-          Delete
-        </Button>
+        <>
+          <Button
+            variant={splitting ? "subtle" : "ghost"}
+            disabled={!splitting && role.permissions.length < 2}
+            title={role.permissions.length < 2 ? "A role needs two or more permissions to split" : undefined}
+            onClick={() => setSplitting((s) => !s)}
+          >
+            {splitting ? "Cancel split" : "Split…"}
+          </Button>
+          <Button variant="danger" onClick={() => dispatch({ type: "role/delete", roleId: role.id })}>
+            Delete
+          </Button>
+        </>
       }
       bodyClassName="p-4 space-y-5"
       className="lg:min-h-0"
     >
+      {splitting && <SplitRoleForm role={role} onDone={() => setSplitting(false)} />}
+
       <Field label="Permissions">
         <div className="space-y-2">
           {RESOURCES.map((resource) => (
@@ -165,15 +182,140 @@ function RoleDetail({ role }: { role: Role }) {
         {directUsers.length === 0 ? (
           <p className="text-xs text-ink-faint">No direct assignments. This is the healthy state.</p>
         ) : (
-          <div className="flex flex-wrap gap-1">
-            {directUsers.map((u) => (
-              <Chip key={u.id} tone="warn">
-                {u.name}
-              </Chip>
-            ))}
-          </div>
+          <>
+            <div className="flex flex-wrap gap-1">
+              {directUsers.map((u) => (
+                <Chip key={u.id} tone="warn">
+                  {u.name}
+                </Chip>
+              ))}
+            </div>
+            <RegroupForm role={role} users={directUsers} />
+          </>
         )}
       </Field>
     </Panel>
+  );
+}
+
+/** Redesign: carve some permissions out of a role into a new one granted everywhere it is. */
+function SplitRoleForm({ role, onDone }: { role: Role; onDone: () => void }) {
+  const { dir } = useDirectory();
+  const dispatch = useDispatch();
+  const [picked, setPicked] = useState<PermissionKey[]>([]);
+  const [name, setName] = useState("");
+
+  // The matrix above stays live, so drop picks the role no longer holds.
+  const chosen = picked.filter((p) => role.permissions.includes(p));
+  const blocker = splitBlocker(role, chosen, name);
+  const holders = [
+    ...dir.groups.filter((g) => g.roleIds.includes(role.id)),
+    ...directHolders(dir, role.id),
+  ].map((h) => h.name);
+
+  return (
+    <form
+      className="space-y-2 rounded-md border border-accent/35 bg-accent/8 p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (blocker) return;
+        dispatch({ type: "role/split", roleId: role.id, permissions: chosen, name: name.trim() });
+        onDone();
+      }}
+    >
+      <div className="text-xs font-semibold">Split {role.name}</div>
+      <p className="text-[11px] text-ink-faint">
+        The permissions you pick move into a new role, granted everywhere {role.name} is
+        {holders.length > 0 ? ` (${holders.join(", ")})` : ""}. Nobody&apos;s access changes until
+        you revoke the new role where it does not belong.
+      </p>
+      <div className="flex flex-wrap gap-1">
+        {role.permissions.map((permission) => {
+          const on = chosen.includes(permission);
+          return (
+            <Chip
+              key={permission}
+              mono
+              tone={on ? (isSensitive(permission) ? "warn" : "accent") : "muted"}
+              onClick={() =>
+                setPicked(on ? picked.filter((p) => p !== permission) : [...picked, permission])
+              }
+            >
+              {on ? "→ " : ""}
+              {permission}
+            </Chip>
+          );
+        })}
+      </div>
+      <div className="flex gap-1.5">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="New role name"
+          className={INPUT}
+        />
+        <Button type="submit" variant="primary" disabled={blocker !== null}>
+          Split
+        </Button>
+      </div>
+      {blocker && <p className="text-[11px] text-ink-faint">{blocker}</p>}
+    </form>
+  );
+}
+
+const NEW_GROUP = "";
+
+/** Redesign: replace every direct assignment of a role with a group that confers the same access. */
+function RegroupForm({ role, users }: { role: Role; users: User[] }) {
+  const { dir } = useDirectory();
+  const dispatch = useDispatch();
+  const targets = equivalentGroups(dir, role.id);
+  const [choice, setChoice] = useState<string | null>(null);
+  const [name, setName] = useState(`${role.name} holders`);
+
+  // Default to reusing an existing group; fall back if the choice stopped qualifying.
+  const valid = choice === NEW_GROUP || targets.some((g) => g.id === choice);
+  const groupId = valid && choice !== null ? choice : (targets[0]?.id ?? NEW_GROUP);
+  const isNew = groupId === NEW_GROUP;
+
+  return (
+    <form
+      className="space-y-1.5 pt-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (isNew && !name.trim()) return;
+        dispatch({
+          type: "role/move-direct-to-group",
+          roleId: role.id,
+          target: isNew ? { name: name.trim() } : { groupId },
+        });
+      }}
+    >
+      <div className="flex flex-wrap gap-1.5">
+        <select value={groupId} onChange={(e) => setChoice(e.target.value)} className={INPUT}>
+          {targets.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
+          ))}
+          <option value={NEW_GROUP}>New group…</option>
+        </select>
+        {isNew && (
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="New group name"
+            className={INPUT}
+          />
+        )}
+        <Button type="submit" variant="primary" disabled={isNew && !name.trim()}>
+          Move {users.length} into group
+        </Button>
+      </div>
+      <p className="text-[11px] text-ink-faint">
+        Replaces each pin with membership of a group that confers exactly {role.name}&apos;s
+        permissions, so nobody&apos;s access changes. Groups that would confer more are not offered.
+      </p>
+    </form>
   );
 }
