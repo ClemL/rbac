@@ -1,5 +1,6 @@
 import {
   ancestorGroups,
+  effectiveMembers,
   effectivePermissions,
   expandedGroups,
   findGroup,
@@ -160,6 +161,11 @@ export const MISSIONS: Mission[] = [
         id: "still-assigned",
         label: "Billing group still grants the role",
         test: (d) => !!findGroup(d, "grp-billing")?.roleIds.includes("role-billing-analyst"),
+      },
+      {
+        id: "billing-clean",
+        label: "No one in Billing can delete patient records",
+        test: (d) => !effectiveMembers(d, "grp-billing").some((u) => can(d, u.id, "patients:delete")),
       },
     ],
   },

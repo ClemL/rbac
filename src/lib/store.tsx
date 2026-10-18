@@ -9,7 +9,8 @@ import {
   type ReactNode,
 } from "react";
 
-import { findGroup, findRole, findUser, wouldCreateCycle } from "./rbac";
+import { findGroup, findRole, findUser, slug, wouldCreateCycle } from "./rbac";
+import { moveDirectToGroup, splitRole, type RegroupTarget } from "./redesign";
 import { seedDirectory } from "./seed";
 import { evaluateMissions, MISSIONS, type MissionResult } from "./tasks";
 import type { Directory, LogEntry, PermissionKey, UserStatus } from "./types";
@@ -32,6 +33,8 @@ export type Action =
   | { type: "role/create"; name: string; description: string }
   | { type: "role/delete"; roleId: string }
   | { type: "role/toggle-permission"; roleId: string; permission: PermissionKey }
+  | { type: "role/split"; roleId: string; permissions: PermissionKey[]; name: string }
+  | { type: "role/move-direct-to-group"; roleId: string; target: RegroupTarget }
   | { type: "select"; kind: SelectionKind; id: string };
 
 export type SelectionKind = "user" | "group" | "role";
@@ -51,14 +54,6 @@ export interface State {
   actions: number;
   completed: string[];
   results: MissionResult[];
-}
-
-function slug(prefix: string, name: string, taken: Set<string>): string {
-  const base = `${prefix}-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}`;
-  let id = base || `${prefix}-new`;
-  let n = 2;
-  while (taken.has(id)) id = `${base}-${n++}`;
-  return id;
 }
 
 interface Mutation {
@@ -203,6 +198,27 @@ function apply(dir: Directory, action: Action): Mutation | null {
         : [...role.permissions, action.permission];
       return {
         message: `${held ? "Removed" : "Added"} ${action.permission} ${held ? "from" : "to"} ${role.name}`,
+      };
+    }
+    case "role/split": {
+      const split = splitRole(dir, action.roleId, action.permissions, action.name);
+      if (!split) return null;
+      const holders = [...split.groups, ...split.users].map((h) => h.name);
+      return {
+        message: `Split ${split.role.permissions.join(", ")} out of ${split.source.name} into ${split.role.name}${
+          holders.length > 0 ? `, granted to ${holders.join(", ")}` : ""
+        } — no one's access changed`,
+        select: { kind: "role", id: split.role.id },
+      };
+    }
+    case "role/move-direct-to-group": {
+      const moved = moveDirectToGroup(dir, action.roleId, action.target);
+      if (!moved) return null;
+      return {
+        message: `Replaced direct ${moved.role.name} on ${moved.users.map((u) => u.name).join(", ")} with membership of ${
+          moved.created ? "new group " : ""
+        }${moved.group.name} — no one's access changed`,
+        select: moved.created ? { kind: "group", id: moved.group.id } : undefined,
       };
     }
     default:

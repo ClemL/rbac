@@ -18,6 +18,15 @@ export function findRole(dir: Directory, id: string): Role | undefined {
   return dir.roles.find((r) => r.id === id);
 }
 
+/** A readable id derived from a display name, suffixed until it is unused. */
+export function slug(prefix: string, name: string, taken: Set<string>): string {
+  const base = `${prefix}-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}`;
+  let id = base || `${prefix}-new`;
+  let n = 2;
+  while (taken.has(id)) id = `${base}-${n++}`;
+  return id;
+}
+
 /**
  * Every group a user is effectively in, mapped to the shortest membership chain
  * that gets them there. Direct memberships map to a single-element path.
